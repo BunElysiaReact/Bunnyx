@@ -1,0 +1,33 @@
+{
+  "name": "bunnyx",
+  "version": "1.0.0",
+  "description": "🐰 BertUI + Elysia — One server, zero abstraction",
+  "type": "module",
+  "main": "./index.ts",
+  "module": "./index.ts",
+  "types": "./index.ts",
+  "bin": {
+    "bunnyx": "./src/cli/index.ts"
+  },
+  "exports": {
+    ".": "./index.ts",
+    "./client": "./src/client/index.ts",
+    "./typegen": "./src/typegen/index.ts"
+  },
+  "scripts": {
+    "dev":   "bun src/cli/index.ts dev",
+    "build": "bun src/cli/index.ts build",
+    "start": "bun src/cli/index.ts start"
+  },
+  "dependencies": {
+    "bertui": "link:bertui",
+    "elysia":"latest",
+    "@elysiajs/eden":"latest"
+  },
+  "peerDependencies": {
+    "bun": ">=1.0.0"
+  },
+  "keywords": ["bun", "elysia", "bertui", "fullstack", "react", "framework"],
+  "author": "Pease Ernest",
+  "license": "MIT"
+}
