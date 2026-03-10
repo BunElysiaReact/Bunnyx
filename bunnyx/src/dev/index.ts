@@ -15,6 +15,16 @@ import { analyzeRoutes }             from 'bertui/hydration';
 
 const TOTAL_STEPS = 6;
 
+// main.js content — uses named export { routes } from router.js
+// NOT `import routes from './router.js'` which gives undefined (router has no default export)
+const MAIN_JS = `import React from 'react';
+import { createRoot } from 'react-dom/client';
+import { Router, routes } from './router.js';
+
+const root = createRoot(document.getElementById('root'));
+root.render(React.createElement(Router, { routes }));
+`;
+
 export async function startDev(config: ResolvedBunnyConfig): Promise<void> {
   logger.banner();
   const { port } = config.dev;
@@ -25,19 +35,9 @@ export async function startDev(config: ResolvedBunnyConfig): Promise<void> {
     // ── Step 1: Compile BertUI src/ ─────────────────────────────────────────
     process.stdout.write(`  [1/${TOTAL_STEPS}] Compiling BertUI...\r`);
     const { routes } = await compileProject(root);
+    // Always write main.js after compile — bertui's compileProject may overwrite it
+    await Bun.write(join(compiledDir, 'main.js'), MAIN_JS);
     console.log(`  [1/${TOTAL_STEPS}] \x1b[32m✓\x1b[0m  BertUI compiled   \x1b[90m${routes.length} routes\x1b[0m`);
-
-    // ── Generate main.js if missing (bunnyx projects don't ship src/main.jsx) ─
-    const mainJsPath = join(compiledDir, 'main.js');
-    if (!existsSync(mainJsPath)) {
-      await Bun.write(mainJsPath, `import React from 'react';
-import { createRoot } from 'react-dom/client';
-import { Router, routes } from './router.js';
-
-const root = createRoot(document.getElementById('root'));
-root.render(React.createElement(Router, { routes }));
-`);
-    }
 
     // ── Step 2: Layouts + Loading states ────────────────────────────────────
     process.stdout.write(`  [2/${TOTAL_STEPS}] Layouts & loading states...\r`);
@@ -53,7 +53,7 @@ root.render(React.createElement(Router, { routes }));
       : { interactive: [], static: [] as any[] };
     console.log(`  [3/${TOTAL_STEPS}] \x1b[32m✓\x1b[0m  Hydration         \x1b[90m${analyzed.interactive.length} interactive · ${(analyzed as any).static?.length ?? 0} static\x1b[0m`);
 
-    // ── Step 4: Load Elysia server (src/index.ts) ────────────────────────────
+    // ── Step 4: Load Elysia server ────────────────────────────────────────────
     process.stdout.write(`  [4/${TOTAL_STEPS}] Loading Elysia server...\r`);
     let userApp = await loadElysiaServer(config.server);
     console.log(`  [4/${TOTAL_STEPS}] \x1b[32m✓\x1b[0m  Elysia            \x1b[90m${userApp ? config.server.replace(root, '') : 'not found — API skipped'}\x1b[0m`);
@@ -64,13 +64,13 @@ root.render(React.createElement(Router, { routes }));
     const patched = await patchTsConfig(root);
     console.log(
       `  [5/${TOTAL_STEPS}] \x1b[32m✓\x1b[0m  \x1b[1m@bunnyx/api\x1b[0m       \x1b[90m` +
-      `bunnyx-env.d.ts · .bunnyx/api-client.ts${patched ? ' · tsconfig patched' : ''}\x1b[0m`
+      `bunnyx-env.d.ts · bunnyx-api/api-client.js${patched ? ' · tsconfig patched' : ''}\x1b[0m`
     );
 
     // ── Step 6: Start unified server ─────────────────────────────────────────
     process.stdout.write(`  [6/${TOTAL_STEPS}] Starting unified server...\r`);
     const bridge = await createBridge(config, userApp, 'dev');
-    bridge.listen(port);
+    await bridge.listen(port);
     console.log(`  [6/${TOTAL_STEPS}] \x1b[32m✓\x1b[0m  Server started`);
 
     logger.ready(port);
@@ -78,6 +78,9 @@ root.render(React.createElement(Router, { routes }));
     logger.dim(`Elysia API       →  src/index.ts`);
     logger.dim(`Type-safe client →  import { api } from '@bunnyx/api'`);
     console.log('');
+
+    // ── Watch src/ — bunnyx owns this, bridge has NO internal watcher ────────
+    watchSrc(root, compiledDir, bridge);
 
     // ── Watch Elysia files ───────────────────────────────────────────────────
     watchElysiaFiles(root, config.server, async () => {
@@ -92,6 +95,56 @@ root.render(React.createElement(Router, { routes }));
     logger.error(`Dev server failed: ${err.message}`);
     if (err.stack) console.error(err.stack);
     process.exit(1);
+  }
+}
+
+function watchSrc(root: string, compiledDir: string, bridge: any) {
+  const srcDir = join(root, 'src');
+  if (!existsSync(srcDir)) return;
+
+  let debounce: Timer | null = null;
+  let recompiling = false;
+
+  watch(srcDir, { recursive: true }, async (_, filename) => {
+    if (!filename?.match(/\.(jsx?|tsx?|css)$/)) return;
+    if (debounce) clearTimeout(debounce);
+
+    debounce = setTimeout(async () => {
+      if (recompiling) return;
+      recompiling = true;
+
+      try {
+        logger.dim(`changed: ${filename}`);
+        broadcast(bridge, { type: 'recompiling' });
+
+        await compileProject(root);
+        // Re-write main.js — compileProject may overwrite it
+        await Bun.write(join(compiledDir, 'main.js'), MAIN_JS);
+
+        broadcast(bridge, { type: 'compiled' });
+        setTimeout(() => broadcast(bridge, { type: 'reload' }), 100);
+        logger.success('Recompiled');
+      } catch (err: any) {
+        logger.error(`Recompile failed: ${err.message}`);
+        broadcast(bridge, {
+          type: 'compilation-error',
+          message: err.message,
+          file: (err as any).file || filename,
+          line: (err as any).line || null,
+          column: (err as any).column || null,
+        });
+      } finally {
+        recompiling = false;
+      }
+    }, 200);
+  });
+}
+
+function broadcast(bridge: any, message: object) {
+  try {
+    bridge.server?.publish('__hmr', JSON.stringify(message));
+  } catch {
+    // no clients yet — fine
   }
 }
 
@@ -114,4 +167,4 @@ function watchElysiaFiles(root: string, serverPath: string, onChanged: () => Pro
       if (filename?.match(/\.(ts|js)$/)) trigger(`api/${filename}`);
     });
   }
-}git add .
+}

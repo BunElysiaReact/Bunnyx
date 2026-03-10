@@ -1,11 +1,4 @@
 // bunnyx/src/server/bridge.ts
-// THE CORE: One Elysia server that runs both BertUI and the user's Elysia app.
-//
-// Routing priority (top = highest):
-//   1. User's Elysia app   → /api/*, any route they define
-//   2. HMR WebSocket       → /__hmr
-//   3. BertUI assets       → /compiled/*, /styles/*, /images/*, /public/*, /node_modules/*
-//   4. BertUI pages        → * (catch-all, lowest priority)
 
 import { Elysia } from 'elysia';
 import { join, extname } from 'path';
@@ -13,7 +6,7 @@ import { existsSync } from 'fs';
 import type { ResolvedBunnyConfig } from '../types/index.ts';
 import { logger } from '../utils/logger.ts';
 
-import { serveHTML, setupFileWatcher } from 'bertui/dev';
+import { serveHTML } from 'bertui/dev';
 import { loadConfig as loadBertuiConfig } from 'bertui/config';
 
 export async function createBridge(
@@ -26,16 +19,12 @@ export async function createBridge(
   const port        = config.dev.port;
   const compiledDir = join(root, '.bertui', 'compiled');
   const stylesDir   = join(root, '.bertui', 'styles');
+  const bunnyxDir   = join(root, 'bunnyx-api');
   const publicDir   = join(root, 'public');
   const srcDir      = join(root, 'src');
 
   const bertuiConfig = await loadBertuiConfig(root);
-  const clients      = new Set<any>();
-
-  let watcherCleanup: (() => void) | null = null;
-  if (mode === 'dev') {
-    watcherCleanup = setupFileWatcher(root, compiledDir, clients, async () => {});
-  }
+  const hasRouter    = existsSync(join(compiledDir, 'router.js'));
 
   const app = new Elysia();
 
@@ -45,13 +34,22 @@ export async function createBridge(
   // ── 2. HMR WebSocket ──────────────────────────────────────────────────────
   if (mode === 'dev') {
     app.ws('/__hmr', {
-      open(ws)  { clients.add(ws); logger.dim(`HMR client connected (${clients.size} total)`); },
-      close(ws) { clients.delete(ws); },
-      message() {},
+      open(ws)    { ws.subscribe('__hmr'); logger.dim('HMR client connected'); },
+      close(ws)   { ws.unsubscribe('__hmr'); },
+      message()   {},
     });
   }
 
-  // ── 3. BertUI compiled JS ─────────────────────────────────────────────────
+  // ── 3. @bunnyx/api client ─────────────────────────────────────────────────
+  app.get('/bunnyx-api/*', async ({ params, set }) => {
+    const file = Bun.file(join(bunnyxDir, (params as any)['*']));
+    if (!(await file.exists())) { set.status = 404; return 'Not found'; }
+    set.headers['Content-Type']  = 'application/javascript; charset=utf-8';
+    set.headers['Cache-Control'] = 'no-store';
+    return file;
+  });
+
+  // ── 4. BertUI compiled JS ─────────────────────────────────────────────────
   app.get('/compiled/*', async ({ params, set }) => {
     const file = Bun.file(join(compiledDir, (params as any)['*']));
     if (!(await file.exists())) { set.status = 404; return 'Not found'; }
@@ -60,7 +58,7 @@ export async function createBridge(
     return file;
   });
 
-  // ── 4. BertUI styles ──────────────────────────────────────────────────────
+  // ── 5. BertUI styles ──────────────────────────────────────────────────────
   app.get('/styles/*', async ({ params, set }) => {
     const file = Bun.file(join(stylesDir, (params as any)['*']));
     if (!(await file.exists())) { set.status = 404; return 'Not found'; }
@@ -69,7 +67,7 @@ export async function createBridge(
     return file;
   });
 
-  // ── 5. Error overlay ──────────────────────────────────────────────────────
+  // ── 6. Error overlay ──────────────────────────────────────────────────────
   app.get('/error-overlay.js', async ({ set }) => {
     const file = Bun.file(join(root, 'node_modules/bertui/error-overlay.js'));
     if (!(await file.exists())) { set.status = 404; return ''; }
@@ -78,29 +76,12 @@ export async function createBridge(
     return file;
   });
 
-  // ── 6. Images ─────────────────────────────────────────────────────────────
+  // ── 7. Images ─────────────────────────────────────────────────────────────
   app.get('/images/*', async ({ params, set }) => {
     const filePath = join(srcDir, 'images', (params as any)['*']);
     const file = Bun.file(filePath);
     if (!(await file.exists())) { set.status = 404; return 'Not found'; }
     set.headers['Content-Type'] = imageContentType(extname(filePath).toLowerCase());
-    return file;
-  });
-
-  // ── 7. Public directory ───────────────────────────────────────────────────
-  app.get('/public/*', async ({ params, set }) => {
-    const file = Bun.file(join(publicDir, (params as any)['*']));
-    if (!(await file.exists())) { set.status = 404; return 'Not found'; }
-    return file;
-  });
-
-  // Root-level public files — /favicon.svg, /robots.txt etc.
-  app.get('/*', async ({ params, set }, next) => {
-    const slug = (params as any)['*'] as string;
-    if (!slug?.includes('.')) return (next as any)?.();
-    const file = Bun.file(join(publicDir, slug));
-    if (!(await file.exists())) return (next as any)?.();
-    set.headers['Content-Type'] = staticContentType(extname(slug).toLowerCase());
     return file;
   });
 
@@ -116,7 +97,7 @@ export async function createBridge(
     return file;
   });
 
-  // ── 9. bertui-animate.css ─────────────────────────────────────────────────
+  // ── 9. bertui-animate.css ────────────────────────────────────────────────
   app.get('/bertui-animate.css', async ({ set }) => {
     const file = Bun.file(join(root, 'node_modules/bertui-animate/dist/bertui-animate.min.css'));
     if (!(await file.exists())) { set.status = 404; return ''; }
@@ -124,18 +105,30 @@ export async function createBridge(
     return file;
   });
 
-  // ── 10. Catch-all → BertUI page renderer ──────────────────────────────────
-  const hasRouter = existsSync(join(compiledDir, 'router.js'));
-  app.get('*', async ({ set }) => {
+  // ── 10. Catch-all ─────────────────────────────────────────────────────────
+  // Handles: SPA routes (/about, /blog/x), public static files (/favicon.svg), HTML
+  app.get('*', async ({ request, set }) => {
+    const url  = new URL(request.url);
+    const slug = url.pathname.replace(/^\//, '');
+    const ext  = extname(slug).toLowerCase();
+
+    // Static file from /public ?
+    if (ext) {
+      const file = Bun.file(join(publicDir, slug));
+      if (await file.exists()) {
+        set.headers['Content-Type'] = staticContentType(ext);
+        return file;
+      }
+      // Unknown static file — 404 rather than serving HTML
+      set.status = 404;
+      return 'Not found';
+    }
+
+    // SPA route — always serve HTML shell
     const html = await serveHTML(root, hasRouter, bertuiConfig, port);
-    set.headers['Content-Type'] = 'text/html';
+    set.headers['Content-Type'] = 'text/html; charset=utf-8';
     return html;
   });
-
-  if (watcherCleanup) {
-    process.on('exit',   watcherCleanup);
-    process.on('SIGINT', () => { watcherCleanup?.(); process.exit(0); });
-  }
 
   return app;
 }
