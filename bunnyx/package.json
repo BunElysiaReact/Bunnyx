@@ -1,6 +1,6 @@
 {
   "name": "bunnyx",
-  "version": "1.0.0",
+  "version": "0.0.1",
   "description": "🐰 BertUI + Elysia — One server, zero abstraction",
   "type": "module",
   "main": "./index.ts",
@@ -20,7 +20,7 @@
     "start": "bun src/cli/index.ts start"
   },
   "dependencies": {
-    "bertui": "link:bertui",
+    "bertui": "latest",
     "elysia":"latest",
     "@elysiajs/eden":"latest"
   },
