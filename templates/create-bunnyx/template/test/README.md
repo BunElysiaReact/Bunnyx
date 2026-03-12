@@ -1,6 +1,6 @@
 markdown
 
-# BertUI v1.2.0 ⚡🏝️🦀
+# BertUI v1.2.4 ⚡🏝️🦀
 
 **The fastest React frontend framework. Now with Rust-powered image optimization.**
 

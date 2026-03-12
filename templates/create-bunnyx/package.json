@@ -1,14 +1,16 @@
 {
   "name": "create-bunnyx",
-  "version": "1.0.0",
+  "version": "0.0.1",
   "description": "🐰 Create a new Bunnyx app",
   "type": "module",
   "bin": {
-    "create-bunnyx": "./index.ts"
+    "create-bertui": "./bin/cli.js"
   },
-  "scripts": {
-    "start": "bun index.ts"
-  },
+  "files": [
+    "bin",
+    "template"
+  ],
+
   "keywords": ["create", "bunny", "bertui", "elysia", "bun", "scaffold"],
   "author": "Pease Ernest",
   "license": "MIT"

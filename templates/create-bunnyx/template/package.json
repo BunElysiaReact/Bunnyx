@@ -1,0 +1,20 @@
+{
+  "name": "bunnyx-test",
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "bunnyx dev",
+    "build": "bunnyx build",
+    "start": "bunnyx start"
+  },
+  "dependencies": {
+    "@elysiajs/cors": "latest",
+    "@elysiajs/eden": "latest",
+    "bertui": "^1.2.3",
+    "bunnyx": "^0.0.1",
+    "elysia": "latest"
+  },
+  "devDependencies": {
+    "bun-types": "latest"
+  }
+}

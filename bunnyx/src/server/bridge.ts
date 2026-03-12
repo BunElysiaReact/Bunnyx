@@ -34,19 +34,38 @@ export async function createBridge(
   // ── 2. HMR WebSocket ──────────────────────────────────────────────────────
   if (mode === 'dev') {
     app.ws('/__hmr', {
-      open(ws)    { ws.subscribe('__hmr'); logger.dim('HMR client connected'); },
-      close(ws)   { ws.unsubscribe('__hmr'); },
-      message()   {},
+      open(ws)  { ws.subscribe('__hmr'); logger.dim('HMR client connected'); },
+      close(ws) { ws.unsubscribe('__hmr'); },
+      message() {},
     });
   }
 
-  // ── 3. @bunnyx/api client ─────────────────────────────────────────────────
+  // ── 3. @bunnyx/api client — transpile .ts on the fly for browser ──────────
   app.get('/bunnyx-api/*', async ({ params, set }) => {
-    const file = Bun.file(join(bunnyxDir, (params as any)['*']));
-    if (!(await file.exists())) { set.status = 404; return 'Not found'; }
-    set.headers['Content-Type']  = 'application/javascript; charset=utf-8';
-    set.headers['Cache-Control'] = 'no-store';
-    return file;
+    const name = (params as any)['*']; // e.g. "api-client.js"
+
+    // Browser always requests .js — we store .ts — transpile in memory
+    const tsPath = join(bunnyxDir, name.replace(/\.js$/, '.ts'));
+    const jsPath = join(bunnyxDir, name);
+
+    const tsFile = Bun.file(tsPath);
+    if (await tsFile.exists()) {
+      const transpiler = new Bun.Transpiler({ loader: 'ts', target: 'browser' });
+      const code = await transpiler.transform(await tsFile.text());
+      set.headers['Content-Type']  = 'application/javascript; charset=utf-8';
+      set.headers['Cache-Control'] = 'no-store';
+      return code;
+    }
+
+    const jsFile = Bun.file(jsPath);
+    if (await jsFile.exists()) {
+      set.headers['Content-Type']  = 'application/javascript; charset=utf-8';
+      set.headers['Cache-Control'] = 'no-store';
+      return jsFile;
+    }
+
+    set.status = 404;
+    return 'Not found';
   });
 
   // ── 4. BertUI compiled JS ─────────────────────────────────────────────────
@@ -67,13 +86,25 @@ export async function createBridge(
     return file;
   });
 
-  // ── 6. Error overlay ──────────────────────────────────────────────────────
+  // ── 6. Error overlay — check multiple locations ───────────────────────────
   app.get('/error-overlay.js', async ({ set }) => {
-    const file = Bun.file(join(root, 'node_modules/bertui/error-overlay.js'));
-    if (!(await file.exists())) { set.status = 404; return ''; }
-    set.headers['Content-Type']  = 'application/javascript; charset=utf-8';
-    set.headers['Cache-Control'] = 'no-store';
-    return file;
+    const locations = [
+      join(root, 'error-overlay.js'),                              // bunnyx root copy
+      join(root, 'node_modules/bunnyx/error-overlay.js'),          // installed bunnyx
+      join(root, 'node_modules/bertui/error-overlay.js'),          // bertui fallback
+    ];
+
+    for (const loc of locations) {
+      const file = Bun.file(loc);
+      if (await file.exists()) {
+        set.headers['Content-Type']  = 'application/javascript; charset=utf-8';
+        set.headers['Cache-Control'] = 'no-store';
+        return file;
+      }
+    }
+
+    set.status = 404;
+    return '';
   });
 
   // ── 7. Images ─────────────────────────────────────────────────────────────
@@ -97,7 +128,7 @@ export async function createBridge(
     return file;
   });
 
-  // ── 9. bertui-animate.css ────────────────────────────────────────────────
+  // ── 9. bertui-animate.css ─────────────────────────────────────────────────
   app.get('/bertui-animate.css', async ({ set }) => {
     const file = Bun.file(join(root, 'node_modules/bertui-animate/dist/bertui-animate.min.css'));
     if (!(await file.exists())) { set.status = 404; return ''; }
@@ -105,26 +136,24 @@ export async function createBridge(
     return file;
   });
 
-  // ── 10. Catch-all ─────────────────────────────────────────────────────────
-  // Handles: SPA routes (/about, /blog/x), public static files (/favicon.svg), HTML
+  // ── 10. Catch-all — SPA routes + public static files ─────────────────────
   app.get('*', async ({ request, set }) => {
     const url  = new URL(request.url);
     const slug = url.pathname.replace(/^\//, '');
     const ext  = extname(slug).toLowerCase();
 
-    // Static file from /public ?
+    // Static file from /public?
     if (ext) {
       const file = Bun.file(join(publicDir, slug));
       if (await file.exists()) {
         set.headers['Content-Type'] = staticContentType(ext);
         return file;
       }
-      // Unknown static file — 404 rather than serving HTML
       set.status = 404;
       return 'Not found';
     }
 
-    // SPA route — always serve HTML shell
+    // SPA route — serve HTML shell
     const html = await serveHTML(root, hasRouter, bertuiConfig, port);
     set.headers['Content-Type'] = 'text/html; charset=utf-8';
     return html;

@@ -9,5 +9,4 @@ trace
 *.tsbuildinfo
 .wrangler
 .elysia
-heap.json
-server
+heap.js
