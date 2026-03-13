@@ -34,6 +34,8 @@ Full-stack Hello World in ~10 lines:
 // src/index.ts
 import { Elysia } from 'elysia';
 export const App = new Elysia().get('/api/hello', () => ({ message: 'Hello from Elysia!' }));
+export type App = typeof App;
+export default App;
 ```
 
 ```jsx
@@ -84,15 +86,18 @@ bun run dev
 - **Instant HMR** — Save any file in `src/` and the browser refreshes in milliseconds.
 - **Auto-orchestration** — Bunnyx detects and stops orphan server listeners, preventing `address already in use` errors during development.
 
-### `@bunnyx/api` Type Bridge
-- **Ambient type generation** — Auto-generates `bunnyx-env.d.ts` so your IDE knows your API routes exist without running any commands.
-- **Eden-powered client** — Uses the official `@elysiajs/eden` under the hood. Full autocomplete, type safety, and WebSocket support out of the box.
+### Type-Safe API Client
+- **Auto-generated client** — Bunnyx generates `bunnyx-api/api-client.ts` on every `bun run dev`. Full autocomplete, type safety, and WebSocket support powered by Eden Treaty.
 - **Path intelligence** — The client auto-detects browser vs server and adjusts `baseUrl` accordingly.
 
 ```ts
-import { api } from '@bunnyx/api';
+// Import directly using the relative path to bunnyx-api/
+import { api } from '../../bunnyx-api/api-client'
+
 const { data } = await api.api.hello.get(); // fully typed ✅
 ```
+
+> ⚠️ **Note:** The `@bunnyx/api` path alias is currently unreliable across all IDE setups. Import directly using the relative path to `bunnyx-api/api-client` instead. Adjust the path based on your file's location relative to the project root.
 
 ### File-Based Routing *(BertUI-Powered)*
 - **Intuitive paths** — `src/pages/blog/[slug].jsx` → `/blog/:slug`. Just drop files.
@@ -112,11 +117,74 @@ my-app/
 │   ├── pages/        ← JSX pages (auto-routed by BertUI)
 │   ├── api/          ← Elysia route files
 │   ├── styles/       ← CSS files
-│   └── index.ts      ← Elysia entry (must export App)
+│   └── index.ts      ← Elysia entry (must export App + type App)
 ├── public/           ← Static files
 ├── bunnyx.config.ts  ← Config
 └── bunnyx-api/       ← Auto-generated client (do not edit)
 ```
+
+---
+
+## Setting Up Your Elysia Server
+
+**Every route file must be registered in `src/index.ts` before it becomes available to the type-safe client.**
+
+```ts
+// src/index.ts
+import { Elysia } from 'elysia'
+import { cors } from '@elysiajs/cors'
+import { usersRoutes } from './api/users'
+import { postsRoutes } from './api/posts'
+import { productsRoutes } from './api/products' // ← add new routes here
+
+const app = new Elysia()
+  .use(cors())
+  .use(usersRoutes)
+  .use(postsRoutes)
+  .use(productsRoutes) // ← and chain them here
+
+// These two exports are required — do not remove them
+export type App = typeof app  // Eden reads this for type generation
+export default app            // Bunnyx reads this to mount routes
+```
+
+> ⚠️ **Do not call `.listen()` in `src/index.ts`.** Bunnyx handles that. Calling it yourself will spin up an orphan server on a random port.
+
+> ⚠️ **Routes not added to `src/index.ts` will not appear in autocomplete** — even if the file exists in `src/api/`. Always register every route file here first.
+
+---
+
+## Using the Type-Safe Client
+
+After adding your routes to `src/index.ts` and running `bun run dev`, the client is auto-generated at `bunnyx-api/api-client.ts`.
+
+```ts
+// src/pages/Users.tsx
+import { useState, useEffect } from 'react'
+import { api } from '../../bunnyx-api/api-client' // adjust path as needed
+
+export default function Users() {
+  const [users, setUsers] = useState([])
+
+  useEffect(() => {
+    api.api.users.get().then(({ data }) => {
+      setUsers(data.users)
+    })
+  }, [])
+
+  return <ul>{users.map(u => <li key={u.id}>{u.name}</li>)}</ul>
+}
+```
+
+Eden Treaty mirrors your URL structure exactly:
+
+| Elysia route | Eden call |
+|---|---|
+| `GET /api/users` | `api.api.users.get()` |
+| `GET /api/users/:id` | `api.api.users({ id: 5 }).get()` |
+| `POST /api/users` | `api.api.users.post({ body: {...} })` |
+| `GET /test/` | `api.test.index.get()` |
+| `GET /test/user/:id` | `api.test.user({ id: 5 }).get()` |
 
 ---
 
@@ -138,6 +206,9 @@ const logger = new Elysia({ name: 'logger' })
 export const App = new Elysia()
   .use(logger)
   .use(postsRoutes);
+
+export type App = typeof App;
+export default App;
 ```
 
 ---
@@ -166,6 +237,7 @@ import { startDev, createBridge, generateTypes } from 'bunnyx';
 - ⚠️ Testing was not done that much. This is a happy beta release.
 - No visual error overlay — check the browser console for errors.
 - Windows support is untested.
+- `@bunnyx/api` path alias is unreliable — import from `bunnyx-api/api-client` directly.
 - Plugins like Elysia Swagger, authentication (Lucia/Auth.js), and tRPC should work — but haven't been tested with the bridge yet. Try it and report back.
 
 ---
