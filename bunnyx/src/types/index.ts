@@ -1,4 +1,4 @@
-// bunny/src/types/index.ts
+// bunnyx/src/types/index.ts
 
 import type { Elysia } from 'elysia';
 
@@ -7,7 +7,6 @@ import type { Elysia } from 'elysia';
 export interface BunnyConfig {
   /**
    * Path to your Elysia server entry file.
-   * Matches the exact format from `bun create elysia` → src/index.ts
    * Default: './src/index.ts'
    */
   server?: string;
@@ -25,9 +24,23 @@ export interface BunnyConfig {
   build?: {
     outDir?: string;
   };
+
+  /**
+   * Paths that Elysia owns but don't start with /api/.
+   * Bunnyx will not serve the HTML shell for these — Elysia handles them directly.
+   * 
+   * @example
+   * // bunnyx.config.ts
+   * export default {
+   *   bypass: ['reference', 'swagger', 'scalar']
+   * }
+   * 
+   * This allows @elysiajs/openapi's /reference route to work correctly.
+   */
+  bypass?: string[];
 }
 
-// ─── BertUI passthrough — mirrors bertui.config.js exactly ───────────────────
+// ─── BertUI passthrough ───────────────────────────────────────────────────────
 
 export interface BertuiMetaConfig {
   title?: string;
@@ -53,47 +66,29 @@ export interface BertuiRobotsConfig {
 }
 
 export interface BertuiBridgeConfig {
-  /** Base URL for sitemap + robots.txt (e.g. 'https://myapp.com') */
-  baseUrl?: string;
-
-  /**
-   * Alias imports — same as bertui.config.js importhow
-   * @example { components: './src/components', ui: './src/components/ui' }
-   */
+  baseUrl?:   string;
   importhow?: Record<string, string>;
-
-  /** Page meta defaults */
-  meta?: BertuiMetaConfig;
-
-  /** App shell / loading screen config */
-  appShell?: BertuiAppShellConfig;
-
-  /** robots.txt config */
-  robots?: BertuiRobotsConfig;
-
-  /** Site name */
-  siteName?: string;
+  meta?:      BertuiMetaConfig;
+  appShell?:  BertuiAppShellConfig;
+  robots?:    BertuiRobotsConfig;
+  siteName?:  string;
 }
 
 // ─── Resolved / internal ─────────────────────────────────────────────────────
 
 export interface ResolvedBunnyConfig {
-  /** Absolute path to Elysia server entry (e.g. /project/src/index.ts) */
   server: string;
-  /** Merged BertUI config — written as bertui.config.js at build time */
   bertui: BertuiBridgeConfig;
   dev:    Required<NonNullable<BunnyConfig['dev']>>;
   build:  Required<NonNullable<BunnyConfig['build']>>;
-  /** Absolute project root */
   root:   string;
+  bypass: string[]; // ← added
 }
 
 // ─── Server module shape ──────────────────────────────────────────────────────
 
 export interface ElysiaServerModule {
-  /** The Elysia app instance — from `export default app` */
   default: Elysia<any, any, any, any, any, any>;
-  /** Optional type export — from `export type App = typeof app` */
   App?: unknown;
 }
 

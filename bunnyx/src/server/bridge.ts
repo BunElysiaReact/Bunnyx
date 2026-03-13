@@ -23,6 +23,9 @@ export async function createBridge(
   const publicDir   = join(root, 'public');
   const srcDir      = join(root, 'src');
 
+  // Normalize bypass paths — strip leading slashes for consistent comparison
+  const bypassPaths = (config.bypass ?? []).map(p => p.replace(/^\//, ''));
+
   const bertuiConfig = await loadBertuiConfig(root);
   const hasRouter    = existsSync(join(compiledDir, 'router.js'));
 
@@ -42,9 +45,7 @@ export async function createBridge(
 
   // ── 3. @bunnyx/api client — transpile .ts on the fly for browser ──────────
   app.get('/bunnyx-api/*', async ({ params, set }) => {
-    const name = (params as any)['*']; // e.g. "api-client.js"
-
-    // Browser always requests .js — we store .ts — transpile in memory
+    const name   = (params as any)['*'];
     const tsPath = join(bunnyxDir, name.replace(/\.js$/, '.ts'));
     const jsPath = join(bunnyxDir, name);
 
@@ -86,14 +87,13 @@ export async function createBridge(
     return file;
   });
 
-  // ── 6. Error overlay — check multiple locations ───────────────────────────
+  // ── 6. Error overlay ──────────────────────────────────────────────────────
   app.get('/error-overlay.js', async ({ set }) => {
     const locations = [
-      join(root, 'error-overlay.js'),                              // bunnyx root copy
-      join(root, 'node_modules/bunnyx/error-overlay.js'),          // installed bunnyx
-      join(root, 'node_modules/bertui/error-overlay.js'),          // bertui fallback
+      join(root, 'error-overlay.js'),
+      join(root, 'node_modules/bunnyx/error-overlay.js'),
+      join(root, 'node_modules/bertui/error-overlay.js'),
     ];
-
     for (const loc of locations) {
       const file = Bun.file(loc);
       if (await file.exists()) {
@@ -102,7 +102,6 @@ export async function createBridge(
         return file;
       }
     }
-
     set.status = 404;
     return '';
   });
@@ -141,6 +140,14 @@ export async function createBridge(
     const url  = new URL(request.url);
     const slug = url.pathname.replace(/^\//, '');
     const ext  = extname(slug).toLowerCase();
+
+    // Bypass — user declared these as Elysia-owned paths in bunnyx.config.ts
+    // e.g. bypass: ['reference', 'swagger'] for @elysiajs/openapi
+    // We return 404 here so Elysia's own handler upstream takes over
+    if (bypassPaths.some(p => slug === p || slug.startsWith(p + '/'))) {
+      set.status = 404;
+      return 'Not found';
+    }
 
     // Static file from /public?
     if (ext) {
